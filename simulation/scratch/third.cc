@@ -36,6 +36,7 @@
 #include <ns3/rdma-driver.h>
 #include <ns3/switch-node.h>
 #include <ns3/sim-setting.h>
+#include <chrono> 
 
 using namespace ns3;
 using namespace std;
@@ -126,17 +127,240 @@ struct FlowInput{
 FlowInput flow_input = {0};
 uint32_t flow_num;
 
+//skip-sim
+
+// uint64_t collectRateInterval=100;
+
+// // 定时器回调函数，用于每隔 interval 时间收集并更新 m_rate
+// void CollectRate(Ptr<RdmaQueuePair> queuePair, double interval=collectRateInterval) {
+//     // 获取当前 m_rate 值并更新 m_rate_array
+//     double currentRate = queuePair->UpdateRateArray();
+
+//     // 你可以在这里输出当前速率用于调试
+//     std::cout << "Current m_rate: " << currentRate << std::endl;
+
+//     // 设置下次定时器
+//     Simulator::Schedule(Seconds(interval), &CollectRate, queuePair, interval);
+// }
+
+uint64_t rateArrayLength=1000;
+uint64_t rateDeltaMax=10e+08;
+uint64_t checkStableInterval=1*100;//us
+uint64_t startCheckTime=0;
+uint64_t flowFinishCount=0;
+uint64_t flowCount=4;
+auto start = std::chrono::high_resolution_clock::now();
+
+
+// 创建一个容器来存储所有的 RdmaHw 对象
+std::vector<Ptr<RdmaHw>> allRdmaHw;
+
+std::vector<double> allFlowStartTime;
+
+std::vector<uint32_t> allFlowUid;
+
+// 获取所有的 RdmaQueuePair
+std::vector<Ptr<RdmaQueuePair>> GetAllQueuePairs(Ptr<RdmaHw> r)
+{
+	std::vector<Ptr<RdmaQueuePair>> allQueuePairs;
+
+	 // 检查是否为空
+    if (r == nullptr) {
+        std::cout << "RdmaHw pointer is null!" << std::endl;
+        return allQueuePairs;  // 返回空的队列对列表
+    }
+
+	// 遍历 m_qpMap 并将每个 RdmaQueuePair 添加到容器中
+	// std::cout << r->m_qpMap.size() << std::endl;
+	for (auto &qpEntry : r->m_qpMap)
+	{
+		allQueuePairs.push_back(qpEntry.second); // 获取队列对并存储
+	}
+
+	return allQueuePairs;
+}
+
+bool CheckAllRdmaQueuePairs(std::vector<Ptr<RdmaHw>> &allRdmaHw)
+{
+	int64_t empty_count = 0;
+	std::vector<Ptr<RdmaQueuePair>> queuePairs;
+	// 遍历所有的 RdmaHw 对象
+	for (auto &rdmaHw : allRdmaHw)
+	{
+		// 获取当前 RdmaHw 对象的所有队列对
+		std::vector<Ptr<RdmaQueuePair>> queuePairs_temp = GetAllQueuePairs(rdmaHw);
+		if (queuePairs_temp.empty())
+		{
+			empty_count++;
+			continue;
+		}
+		queuePairs.insert(queuePairs.end(), queuePairs_temp.begin(), queuePairs_temp.end());
+	}
+
+	for (auto &queuePair : queuePairs)
+	{
+		if (!queuePair->CheckStable(rateArrayLength, rateDeltaMax))
+		{
+			return false; // 如果有一个队列对不稳定，返回 false
+		}
+	}
+
+	if (empty_count == allRdmaHw.size())
+	{
+		return false;
+	}
+	return true;
+}
+
+void clearAllRdmaQueuePairsRateArray(std::vector<Ptr<RdmaHw>> &allRdmaHw)
+{
+	std::vector<Ptr<RdmaQueuePair>> queuePairs;
+	// 遍历所有的 RdmaHw 对象
+	for (auto &rdmaHw : allRdmaHw)
+	{
+		// 获取当前 RdmaHw 对象的所有队列对
+		std::vector<Ptr<RdmaQueuePair>> queuePairs_temp = GetAllQueuePairs(rdmaHw);
+		if (queuePairs_temp.empty())
+		{
+			continue;
+		}
+		queuePairs.insert(queuePairs.end(), queuePairs_temp.begin(), queuePairs_temp.end());
+	}
+
+	for (auto &queuePair : queuePairs)
+	{
+		queuePair->ClearRateArray();
+	}
+
+	
+}
+
+Time FindNextFlowStartTimeDelta(std::vector<double> allFlowStartTime) {
+    std::sort(allFlowStartTime.begin(), allFlowStartTime.end());
+    double now = ns3::Simulator::Now().GetSeconds();
+    for (size_t i = 0; i < allFlowStartTime.size(); ++i) {
+        if (allFlowStartTime[i] > now) {
+            std::cout << "The next flow start time is: " << allFlowStartTime[i] << std::endl;
+            return Seconds(allFlowStartTime[i]-ns3::Simulator::Now().GetSeconds());
+        }
+    }
+    std::cout << "No next flow." << std::endl;
+	return Time(0);
+}
+
+Time FindNextCurrentFlowEndTimeDelta(std::vector<Ptr<RdmaHw>> &allRdmaHw) {
+	std::vector<Ptr<RdmaQueuePair>> queuePairs;
+	for (auto &rdmaHw : allRdmaHw)
+	{
+		std::vector<Ptr<RdmaQueuePair>> queuePairs_temp = GetAllQueuePairs(rdmaHw);
+		if (queuePairs_temp.empty())
+		{
+			continue;
+		}
+		queuePairs.insert(queuePairs.end(), queuePairs_temp.begin(), queuePairs_temp.end());
+	}
+
+	double minTimeS=-1;
+	for (auto &queuePair : queuePairs)
+	{
+		if(minTimeS==-1)
+		{
+			minTimeS=queuePair->GetAsumeFinishTimeS();
+		}
+		if(queuePair->GetAsumeFinishTimeS()<minTimeS)
+		{
+			minTimeS=queuePair->GetAsumeFinishTimeS();
+		}
+	}
+
+	return Seconds(minTimeS);
+}
+
+Time GetNextNonSteadyStateTime()
+{
+
+	Time nextFultureFlowStartTimeDelta=FindNextFlowStartTimeDelta(allFlowStartTime);
+	Time nextCurrentFlowEndTimeDelta=FindNextCurrentFlowEndTimeDelta(allRdmaHw);
+
+	std::cout<<"next flow add time delta:"<<nextFultureFlowStartTimeDelta.GetNanoSeconds()<<"ns"<<"\n";
+	std::cout<<"next flow end time delta:"<<nextCurrentFlowEndTimeDelta.GetNanoSeconds()<<"ns"<<"\n";
+	//模拟下一条流加入 ,15000ns
+	// double time= 1000*15;
+	// double time= Simulator::Now().GetNanoSeconds()+1000*15;
+	
+	return nextFultureFlowStartTimeDelta<nextCurrentFlowEndTimeDelta?nextFultureFlowStartTimeDelta:nextCurrentFlowEndTimeDelta;
+}
+
+
+void StepTime(Time time,std::vector<Ptr<RdmaHw>> &allRdmaHw)
+{
+	std::vector<Ptr<RdmaQueuePair>> queuePairs;
+	// 遍历所有的 RdmaHw 对象
+	for (auto &rdmaHw : allRdmaHw)
+	{
+		// 获取当前 RdmaHw 对象的所有队列对
+		std::vector<Ptr<RdmaQueuePair>> queuePairs_temp = GetAllQueuePairs(rdmaHw);
+		if (queuePairs_temp.empty())
+		{
+			continue;
+		}
+		queuePairs.insert(queuePairs.end(), queuePairs_temp.begin(), queuePairs_temp.end());
+	}
+	for (auto &queuePair : queuePairs)
+	{
+		queuePair->StepTime(time,rateArrayLength);
+	}
+
+}
+
+void CheckStable()
+{
+	if(CheckAllRdmaQueuePairs(allRdmaHw))
+	{
+		printf("stable.\n");
+
+		//step1 : qppair 减去 size
+		Time nextNonSteadyStateTime=GetNextNonSteadyStateTime();
+		//减5000ns，使流完成事件跑完
+		nextNonSteadyStateTime=NanoSeconds( nextNonSteadyStateTime.GetNanoSeconds()-5000);
+		StepTime(nextNonSteadyStateTime,allRdmaHw);
+
+		// step2 : m_event + delay
+		std::cout << "SetEventDelay:" << nextNonSteadyStateTime.GetTimeStep() << "\n";
+		Simulator::SetEventDelay(nextNonSteadyStateTime,allFlowUid);
+		
+
+		// step3 ：clear rate array
+		clearAllRdmaQueuePairsRateArray(allRdmaHw);
+	}
+	else
+	{
+		printf("not stable.\n");
+	}
+}
+
+
+
+void ScheduelCheck(uint64_t interval)
+{
+	CheckStable();
+	Simulator::Schedule(MicroSeconds(interval), &ScheduelCheck,checkStableInterval);
+}
+
 void ReadFlowInput(){
 	if (flow_input.idx < flow_num){
 		flowf >> flow_input.src >> flow_input.dst >> flow_input.pg >> flow_input.dport >> flow_input.maxPacketCount >> flow_input.start_time;
 		NS_ASSERT(n.Get(flow_input.src)->GetNodeType() == 0 && n.Get(flow_input.dst)->GetNodeType() == 0);
+		allFlowStartTime.push_back(flow_input.start_time);
 	}
 }
 void ScheduleFlowInputs(){
 	while (flow_input.idx < flow_num && Seconds(flow_input.start_time) == Simulator::Now()){
+		std::cout<<"Simulator::Now():"<<Simulator::Now().GetSeconds()<<"\n";
 		uint32_t port = portNumder[flow_input.src][flow_input.dst]++; // get a new port number 
 		RdmaClientHelper clientHelper(flow_input.pg, serverAddress[flow_input.src], serverAddress[flow_input.dst], port, flow_input.dport, flow_input.maxPacketCount, has_win?(global_t==1?maxBdp:pairBdp[n.Get(flow_input.src)][n.Get(flow_input.dst)]):0, global_t==1?maxRtt:pairRtt[flow_input.src][flow_input.dst]);
 		ApplicationContainer appCon = clientHelper.Install(n.Get(flow_input.src));
+		std::cout <<"flow_input.start_time:"<<Simulator::Now().GetSeconds()<<"\n";
 		appCon.Start(Time(0));
 
 		// get the next flow input
@@ -146,7 +370,10 @@ void ScheduleFlowInputs(){
 
 	// schedule the next time to run this function
 	if (flow_input.idx < flow_num){
-		Simulator::Schedule(Seconds(flow_input.start_time)-Simulator::Now(), ScheduleFlowInputs);
+		std::cout <<"flow_input.start_time:"<<flow_input.start_time<<"\n";
+		std::cout <<"Simulator::Now():"<<Simulator::Now().GetSeconds()<<"\n";
+		EventId id= Simulator::Schedule(Seconds(flow_input.start_time)-Simulator::Now(), ScheduleFlowInputs);
+		allFlowUid.push_back(id.GetUid());
 	}else { // no more flows, close the file
 		flowf.close();
 	}
@@ -160,19 +387,34 @@ uint32_t ip_to_node_id(Ipv4Address ip){
 	return (ip.Get() >> 8) & 0xffff;
 }
 
+
 void qp_finish(FILE* fout, Ptr<RdmaQueuePair> q){
+	if(q->ori_m_size==0)
+	{
+		q->ori_m_size=q->m_size;
+	}
+
 	uint32_t sid = ip_to_node_id(q->sip), did = ip_to_node_id(q->dip);
 	uint64_t base_rtt = pairRtt[sid][did], b = pairBw[sid][did];
-	uint32_t total_bytes = q->m_size + ((q->m_size-1) / packet_payload_size + 1) * (CustomHeader::GetStaticWholeHeaderSize() - IntHeader::GetStaticSize()); // translate to the minimum bytes required (with header but no INT)
+	uint32_t total_bytes = q->ori_m_size + ((q->ori_m_size-1) / packet_payload_size + 1) * (CustomHeader::GetStaticWholeHeaderSize() - IntHeader::GetStaticSize()); // translate to the minimum bytes required (with header but no INT)
 	uint64_t standalone_fct = base_rtt + total_bytes * 8000000000lu / b;
 	// sip, dip, sport, dport, size (B), start_time, fct (ns), standalone_fct (ns)
-	fprintf(fout, "%08x %08x %u %u %lu %lu %lu %lu\n", q->sip.Get(), q->dip.Get(), q->sport, q->dport, q->m_size, q->startTime.GetTimeStep(), (Simulator::Now() - q->startTime).GetTimeStep(), standalone_fct);
+	fprintf(fout, "%08x %08x %u %u %lu %lu %lu %lu\n", q->sip.Get(), q->dip.Get(), q->sport, q->dport, q->ori_m_size, q->startTime.GetTimeStep(), (Simulator::Now() - q->startTime).GetTimeStep(), standalone_fct);
 	fflush(fout);
 
 	// remove rxQp from the receiver
 	Ptr<Node> dstNode = n.Get(did);
 	Ptr<RdmaDriver> rdma = dstNode->GetObject<RdmaDriver> ();
 	rdma->m_rdma->DeleteRxQp(q->sip.Get(), q->m_pg, q->sport);
+	flowFinishCount++;
+
+	if(flowFinishCount==flowCount)
+	{
+		auto end = std::chrono::high_resolution_clock::now();
+		std::chrono::duration<double, std::milli> duration = end - start;
+		std::cout << "程序执行时间: " << duration.count() << " 毫秒" << std::endl;
+		Simulator::Stop();
+	}
 }
 
 void get_pfc(FILE* fout, Ptr<QbbNetDevice> dev, uint32_t type){
@@ -335,6 +577,7 @@ uint64_t get_nic_rate(NodeContainer &n){
 
 int main(int argc, char *argv[])
 {
+	
 	clock_t begint, endt;
 	begint = clock();
 #ifndef PGO_TRAINING
@@ -890,6 +1133,9 @@ int main(int argc, char *argv[])
 			node->AggregateObject (rdma);
 			rdma->Init();
 			rdma->TraceConnectWithoutContext("QpComplete", MakeBoundCallback (qp_finish, fct_output));
+
+			// 存储所有的 RdmaHw 对象
+        	allRdmaHw.push_back(rdmaHw);
 		}
 	}
 	#endif
@@ -1013,7 +1259,11 @@ int main(int argc, char *argv[])
 	std::cout << "Running Simulation.\n";
 	fflush(stdout);
 	NS_LOG_INFO("Run Simulation.");
-	Simulator::Stop(Seconds(simulator_stop_time));
+	// Simulator::Stop(Seconds(simulator_stop_time));
+	
+	//skip_sim
+	ScheduelCheck(startCheckTime);
+
 	Simulator::Run();
 	Simulator::Destroy();
 	NS_LOG_INFO("Done.");
@@ -1023,3 +1273,4 @@ int main(int argc, char *argv[])
 	std::cout << (double)(endt - begint) / CLOCKS_PER_SEC << "\n";
 
 }
+

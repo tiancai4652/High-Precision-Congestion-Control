@@ -176,6 +176,13 @@ Simulator::Stop (Time const &time)
   GetImpl ()->Stop (time);
 }
 
+void 
+Simulator::SetEventDelay (Time const &time,std::vector<uint32_t> const &allFlowUid)
+{
+  NS_LOG_FUNCTION (time);
+  GetImpl ()->SetEventDelay (time,allFlowUid);
+}
+
 Time
 Simulator::Now (void)
 {

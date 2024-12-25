@@ -1,0 +1,5 @@
+simulation/build/
+simulation/waf-tools/
+simulation/.waf*
+simulation/.lock-waf_linux2_build
+simulation/*.pyc

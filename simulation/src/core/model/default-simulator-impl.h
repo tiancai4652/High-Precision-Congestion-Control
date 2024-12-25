@@ -50,6 +50,7 @@ public:
   virtual bool IsFinished (void) const;
   virtual void Stop (void);
   virtual void Stop (Time const &time);
+  virtual void SetEventDelay (Time const &time,std::vector<uint32_t> const &allFlowUid);
   virtual EventId Schedule (Time const &time, EventImpl *event);
   virtual void ScheduleWithContext (uint32_t context, Time const &time, EventImpl *event);
   virtual EventId ScheduleNow (EventImpl *event);

@@ -234,7 +234,7 @@ void RdmaHw::AddQueuePair(uint64_t size, uint16_t pg, Ipv4Address sip, Ipv4Addre
 	m_nic[nic_idx].qpGrp->AddQp(qp);
 	uint64_t key = GetQpKey(dip.Get(), sport, pg);
 	m_qpMap[key] = qp;
-
+	std::cout << "count:"<< m_qpMap.size() << "\n";
 	// set init variables
 	DataRate m_bps = m_nic[nic_idx].dev->GetDataRate();
 	qp->m_rate = m_bps;
@@ -261,6 +261,7 @@ void RdmaHw::DeleteQueuePair(Ptr<RdmaQueuePair> qp){
 	// remove qp from the m_qpMap
 	uint64_t key = GetQpKey(qp->dip.Get(), qp->sport, qp->m_pg);
 	m_qpMap.erase(key);
+	std::cout << "count:"<< m_qpMap.size() << "\n";
 }
 
 Ptr<RdmaRxQueuePair> RdmaHw::GetRxQp(uint32_t sip, uint32_t dip, uint16_t sport, uint16_t dport, uint16_t pg, bool create){
@@ -609,6 +610,8 @@ void RdmaHw::ChangeRate(Ptr<RdmaQueuePair> qp, DataRate new_rate){
 
 	// change to new rate
 	qp->m_rate = new_rate;
+	// printf("m_rate=%ld\n",qp->m_rate);
+	qp->UpdateRateArray();
 }
 
 #define PRINT_LOG 0

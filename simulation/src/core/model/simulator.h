@@ -132,6 +132,8 @@ public:
    */
   static void Stop (Time const &time);
 
+  static void SetEventDelay (Time const &time,std::vector<uint32_t> const &allFlowUid);
+
   /**
    * Schedule an event to expire at the relative time "time"
    * is reached.  This can be thought of as scheduling an event

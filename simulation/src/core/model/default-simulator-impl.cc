@@ -218,6 +218,30 @@ DefaultSimulatorImpl::Stop (Time const &time)
   Simulator::Schedule (time, &Simulator::Stop);
 }
 
+void 
+DefaultSimulatorImpl::SetEventDelay(Time const &time,std::vector<uint32_t> const &allFlowUid) {
+    NS_LOG_FUNCTION(this);
+
+    std::vector<Scheduler::Event> tempEvents;
+    while (!m_events->IsEmpty()) {
+        Scheduler::Event event = m_events->RemoveNext();
+        tempEvents.push_back(event);
+    }
+    std::cout<<"next event time :"<<tempEvents[0].key.m_ts<<"\n";
+    for (Scheduler::Event &event : tempEvents) {
+      if (std::find(allFlowUid.begin(), allFlowUid.end(), event.key.m_uid) == allFlowUid.end())
+      {
+        Time tAbsolute = time + TimeStep(event.key.m_ts);
+        event.key.m_ts = (uint64_t)tAbsolute.GetTimeStep();
+      }
+    }
+    std::cout<<"next event time2:"<<tempEvents[0].key.m_ts<<"\n";
+    for (const Scheduler::Event &event : tempEvents) {
+        m_events->Insert(event);
+    }
+}
+
+
 //
 // Schedule an event for a _relative_ time in the future.
 //
@@ -229,7 +253,7 @@ DefaultSimulatorImpl::Schedule (Time const &time, EventImpl *event)
   NS_ASSERT_MSG (SystemThread::Equals (m_main), "Simulator::Schedule Thread-unsafe invocation!");
 #endif
   Time tAbsolute = time + TimeStep (m_currentTs);
-
+  // std::cout<<"tAbsolute:"<<tAbsolute<<"\n";
   NS_ASSERT (tAbsolute.IsPositive ());
   NS_ASSERT (tAbsolute >= TimeStep (m_currentTs));
   Scheduler::Event ev;

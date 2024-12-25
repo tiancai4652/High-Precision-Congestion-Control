@@ -9,7 +9,6 @@
 #include <ns3/custom-header.h>
 #include <ns3/int-header.h>
 #include <vector>
-
 namespace ns3 {
 
 class RdmaQueuePair : public Object {
@@ -30,6 +29,75 @@ public:
 	uint32_t lastPktSize;
 	Callback<void> m_notifyAppFinish;
 
+
+	//skip_sim
+	uint64_t ori_m_size=0;
+	std::vector<double> m_rate_array;  // 存储不同时间的 m_rate 值
+	// 方法：插入到 m_rate_array
+    uint64_t UpdateRateArray() {
+		uint64_t r = m_rate.GetBitRate();
+		m_rate_array.push_back(r); // 将当前 m_rate 存入数组
+		// std::cout << "m_rate_array:" << m_rate_array.size() << "\n";
+		return r;
+	}
+
+	bool CheckStable(uint64_t lengthMin, uint64_t deltaMax)
+	{
+		// 检查 m_rate_array 长度是否满足 minimum 长度
+		if (m_rate_array.size() < lengthMin)
+		{
+			return false;
+		}
+	    std::vector<double> lastElements(m_rate_array.end() - lengthMin, m_rate_array.end());
+
+		// 获取 m_rate_array 的最大值和最小值
+		double maxRate = *std::max_element(lastElements.begin(), lastElements.end());
+		double minRate = *std::min_element(lastElements.begin(), lastElements.end());
+
+		double delta = maxRate - minRate;
+		std::cout <<sip.Get()<<"."<< sport << ".delta:" << delta << "\n";
+
+		m_rate_array=lastElements;
+
+		// 判断最大值和最小值的差是否小于等于 deltaMax
+		if (delta <= deltaMax)
+		{
+			return true;
+		}
+
+		return false;
+	}
+
+	void StepTime(Time time, uint64_t lengthMin)
+	{
+		std::vector<double> lastElements(m_rate_array.end() - lengthMin, m_rate_array.end());
+		m_rate_array=lastElements;
+		double rate = m_rate_array[m_rate_array.size() - 1];
+		double size= time.GetSeconds()*rate/8;
+		if(ori_m_size==0)
+		{
+			ori_m_size=m_size;
+		}
+		uint64_t m_size_current = m_size;
+		m_size -= size;
+		std::cout << sip.Get() << "." << sport << ".m_size=" << m_size_current << "-" << size << "=" << m_size << std::endl;
+	}
+
+	void ClearRateArray()
+	{
+		m_rate_array.clear();
+	}
+
+	double GetAsumeFinishTimeS()
+	{
+		if(ori_m_size==0)
+		{
+			ori_m_size=m_size;
+		}
+		uint64_t size = m_size - snd_una;
+		double rate = m_rate_array[m_rate_array.size() - 1] / 8;
+		return size / rate;
+	}
 	/******************************
 	 * runtime states
 	 *****************************/

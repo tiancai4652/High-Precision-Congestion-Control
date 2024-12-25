@@ -65,6 +65,8 @@ public:
    * @param time the stop time, relative to the current time.
    */
   virtual void Stop (Time const &time) = 0;
+  //skip sim
+  virtual void SetEventDelay (Time const &time,std::vector<uint32_t> const &allFlowUid) = 0;
   /**
    * \param time delay until the event expires
    * \param event the event to schedule
